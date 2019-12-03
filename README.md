@@ -7,8 +7,8 @@ Final BSc thesis is a course held at University of Zagreb, Faculty of Electrical
 To install OSALG run commands:
 
 ```bash
-git clone --recursive --single-branch -b rjpenic https://github.com/lbcb-edu/BSc-thesis-18-19
-cd BSc-thesis-18-19
+git clone --recursive https://github.com/RJPenic/OSALG
+cd OSALG
 mkdir build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
