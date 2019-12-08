@@ -6,8 +6,6 @@
 #include <immintrin.h> //AVX
 #include <stdlib.h>
 
-#include "OSALG_lib.h"
-
 #define N_BORDER 30
 #define L 2
 #define MATCH_SCORE -2
@@ -28,6 +26,10 @@ namespace OSALG_vector {
 
 	std::vector<int> u{ 4, 2 };
 	std::vector<int> v{ 1, 13 };
+
+	std::string mem_safety_add = "++++++++++++++++";
+
+	__m256i reverse_mask = _mm256_setr_epi32(7, 6, 5, 4, 3, 2, 1, 0);
 
 	std::unordered_map<int, char> CIGAR_map = {
 			{MATCH, 'M'},
@@ -245,6 +247,12 @@ namespace OSALG_vector {
 	}
 
 	int long_gaps_alignment(std::string const &seq1, std::string const &seq2, std::string &cigar, bool extended_cigar) {
+		std::string seq1_safe = mem_safety_add + seq1 + mem_safety_add;
+		std::string seq2_safe = mem_safety_add + seq2 + mem_safety_add;
+
+		const char *seq1_arr = seq1_safe.c_str();
+		const char *seq2_arr = seq2_safe.c_str();
+
 		int matrix_row_num = seq1.length() + seq2.length() + 1;
 
 		int **d_mat = new int*[matrix_row_num];
@@ -267,6 +275,9 @@ namespace OSALG_vector {
 		__m256i u_2_vec = _mm256_set1_epi32(u[1]);
 		__m256i v_1_vec = _mm256_set1_epi32(v[0]);
 		__m256i v_2_vec = _mm256_set1_epi32(v[1]);
+
+		__m256i match_vec = _mm256_set1_epi32(MATCH_SCORE);
+		__m256i mismatch_vec = _mm256_set1_epi32(MISMATCH_SCORE);
 
 		//first half of diagonals
 		for(int i = TRIANGLE_SIZE; i <= seq1.length(); ++i) {
@@ -293,10 +304,18 @@ namespace OSALG_vector {
 				int m = last_ind - j + ((i > seq2.length()) ? (i - seq2.length()) : 0);
 				int n = j - 1;
 
-				__m256i diff_vec = _mm256_setr_epi32(test_coord_eligibility(m, n, seq1, seq2) ? diff(seq1[m - 1], seq2[n - 1]) : 0, test_coord_eligibility(m - 1, n + 1, seq1, seq2) ? diff(seq1[m - 2], seq2[n]) : 0,
-						test_coord_eligibility(m - 2, n + 2, seq1, seq2) ? diff(seq1[m - 3], seq2[n + 1]) : 0, test_coord_eligibility(m - 3, n + 3, seq1, seq2) ? diff(seq1[m - 4], seq2[n + 2]) : 0,
-						test_coord_eligibility(m - 4, n + 4, seq1, seq2) ? diff(seq1[m - 5], seq2[n + 3]) : 0, test_coord_eligibility(m - 5, n + 5, seq1, seq2) ? diff(seq1[m - 6], seq2[n + 4]) : 0,
-						test_coord_eligibility(m - 6, n + 6, seq1, seq2) ? diff(seq1[m - 7], seq2[n + 5]) : 0, test_coord_eligibility(m - 7, n + 7, seq1, seq2) ? diff(seq1[m - 8], seq2[n + 6]) : 0);
+				__m128i seq1_chars = _mm_loadu_si128((__m128i *)&seq1_arr[m - 1 + 16]);
+				__m128i seq2_chars = _mm_loadu_si128((__m128i *)&seq2_arr[n - 1 + 16]);//load chars
+
+				__m256i seq1_chars_ext = _mm256_cvtepu8_epi32 (seq1_chars);
+				__m256i seq2_chars_ext = _mm256_cvtepu8_epi32 (seq2_chars);
+
+				seq1_chars_ext = _mm256_permutevar8x32_epi32(seq1_chars_ext, reverse_mask);
+
+				__m256i mask = _mm256_cmpeq_epi32(seq1_chars_ext, seq2_chars_ext);
+
+				__m256i diff_vec = _mm256_blendv_epi8 (mismatch_vec, match_vec, mask);
+
 
 				__m256i first_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 2][j - 1]);
 
@@ -346,10 +365,17 @@ namespace OSALG_vector {
 				int m = seq1.length() + 1 - j;
 				int n = seq2.length() - last_ind + j - ((i < seq2.length()) ? (seq2.length() - i) : 0);
 
-				__m256i diff_vec = _mm256_setr_epi32(test_coord_eligibility(m, n, seq1, seq2) ? diff(seq1[m - 1], seq2[n - 1]) : 0, test_coord_eligibility(m - 1, n + 1, seq1, seq2) ? diff(seq1[m - 2], seq2[n]) : 0,
-						test_coord_eligibility(m - 2, n + 2, seq1, seq2) ? diff(seq1[m - 3], seq2[n + 1]) : 0, test_coord_eligibility(m - 3, n + 3, seq1, seq2) ? diff(seq1[m - 4], seq2[n + 2]) : 0,
-						test_coord_eligibility(m - 4, n + 4, seq1, seq2) ? diff(seq1[m - 5], seq2[n + 3]) : 0, test_coord_eligibility(m - 5, n + 5, seq1, seq2) ? diff(seq1[m - 6], seq2[n + 4]) : 0,
-						test_coord_eligibility(m - 6, n + 6, seq1, seq2) ? diff(seq1[m - 7], seq2[n + 5]) : 0, test_coord_eligibility(m - 7, n + 7, seq1, seq2) ? diff(seq1[m - 8], seq2[n + 6]) : 0);
+				__m128i seq1_chars = _mm_loadu_si128((__m128i *)&seq1_arr[m - 1 + 16]);
+				__m128i seq2_chars = _mm_loadu_si128((__m128i *)&seq2_arr[n - 1 + 16]);//load chars
+
+				__m256i seq1_chars_ext = _mm256_cvtepu8_epi32 (seq1_chars);
+				__m256i seq2_chars_ext = _mm256_cvtepu8_epi32 (seq2_chars);
+
+				seq1_chars_ext = _mm256_permutevar8x32_epi32(seq1_chars_ext, reverse_mask);
+
+				__m256i mask = _mm256_cmpeq_epi32(seq1_chars_ext, seq2_chars_ext);
+
+				__m256i diff_vec = _mm256_blendv_epi8 (mismatch_vec, match_vec, mask);
 
 				__m256i first_diagonal_d = _mm256_loadu_si256((__m256i *)((i == seq1.length() + 1) ? &d_mat[i - 2][j] : &d_mat[i - 2][j + 1]));
 
