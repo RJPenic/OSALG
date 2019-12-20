@@ -246,9 +246,61 @@ namespace OSALG_vector {
 		cigar = std::to_string(counter) + lastChar + cigar;
 	}
 
+	void process_vector(int **d_mat, int **f1_mat, int **f2_mat, __m256i const &u_1_vec, __m256i const &u_2_vec, __m256i const &v_1_vec, __m256i const &v_2_vec,
+				__m256i const &match_vec, __m256i const &mismatch_vec, __m256i const insert_penalty_vec, int i, int j, int up_j, int left_j, int upper_left_j,
+ 				int m, int n, int memory_safety_len,
+				char const *seq1_safe, char const *seq2_safe) {
+
+		__m256i second_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 1][up_j]);
+		//First part of convex function
+		__m256i second_diagonal_f1 = _mm256_loadu_si256((__m256i *)&f1_mat[i - 1][up_j]);
+
+		__m256i third_diagonal_f1 = _mm256_add_epi32(second_diagonal_d, v_1_vec);
+		third_diagonal_f1 = _mm256_min_epi32(third_diagonal_f1, second_diagonal_f1);
+		third_diagonal_f1 = _mm256_add_epi32(third_diagonal_f1, u_1_vec);
+		__m256i third_diagonal_d = third_diagonal_f1;
+		//Second part of convex function
+		__m256i second_diagonal_f2 = _mm256_loadu_si256((__m256i *)&f2_mat[i - 1][up_j]);
+
+		__m256i third_diagonal_f2 = _mm256_add_epi32(second_diagonal_d, v_2_vec);
+		third_diagonal_f2 = _mm256_min_epi32(third_diagonal_f2, second_diagonal_f2);
+		third_diagonal_f2 = _mm256_add_epi32(third_diagonal_f2, u_2_vec);
+		third_diagonal_d = _mm256_min_epi32(third_diagonal_f2, third_diagonal_d);
+
+		__m128i seq1_chars = _mm_loadu_si128((__m128i *)&seq1_safe[m - 1 + memory_safety_len]);
+		__m128i seq2_chars = _mm_loadu_si128((__m128i *)&seq2_safe[n - 1]);//load chars
+
+		__m256i seq1_chars_ext = _mm256_cvtepu8_epi32 (seq1_chars);
+		__m256i seq2_chars_ext = _mm256_cvtepu8_epi32 (seq2_chars);
+
+		seq1_chars_ext = _mm256_permutevar8x32_epi32(seq1_chars_ext, reverse_mask);
+
+		__m256i mask = _mm256_cmpeq_epi32(seq1_chars_ext, seq2_chars_ext);
+
+		__m256i diff_vec = _mm256_blendv_epi8 (mismatch_vec, match_vec, mask);
+
+
+		__m256i first_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 2][upper_left_j]);
+
+		__m256i third_diagonal_f0 = _mm256_add_epi32(first_diagonal_d, diff_vec);
+
+		third_diagonal_d = _mm256_min_epi32(third_diagonal_f0, third_diagonal_d);
+
+		//Insertion
+		second_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 1][left_j]);
+
+		__m256i third_diagonal_ins = _mm256_add_epi32(second_diagonal_d, insert_penalty_vec);
+		third_diagonal_d = _mm256_min_epi32(third_diagonal_ins, third_diagonal_d);
+
+		//storing results in matrices
+		_mm256_storeu_si256((__m256i *)&d_mat[i][j], third_diagonal_d);
+		_mm256_storeu_si256((__m256i *)&f1_mat[i][j], third_diagonal_f1);
+		_mm256_storeu_si256((__m256i *)&f2_mat[i][j], third_diagonal_f2);
+	}
+
 	int long_gaps_alignment(std::string const &seq1, std::string const &seq2, std::string &cigar, bool extended_cigar) {
-		std::string seq1_safe = mem_safety_add + seq1 + mem_safety_add;
-		std::string seq2_safe = mem_safety_add + seq2 + mem_safety_add;
+		std::string seq1_safe = mem_safety_add + seq1;
+		std::string seq2_safe = seq2 + mem_safety_add;
 
 		const char *seq1_arr = seq1_safe.c_str();
 		const char *seq2_arr = seq2_safe.c_str();
@@ -279,122 +331,23 @@ namespace OSALG_vector {
 		__m256i match_vec = _mm256_set1_epi32(MATCH_SCORE);
 		__m256i mismatch_vec = _mm256_set1_epi32(MISMATCH_SCORE);
 
-		//first half of diagonals
-		for(int i = TRIANGLE_SIZE; i <= seq1.length(); ++i) {
+		for(int i = TRIANGLE_SIZE; i < matrix_row_num; ++i) {
 			int last_ind = get_last_index(i, seq1, seq2);
 
 			for(int j = 1; j <= last_ind; j += VECTOR_SIZE) {
-				__m256i second_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 1][j]);
-				//First part of convex function
-				__m256i second_diagonal_f1 = _mm256_loadu_si256((__m256i *)&f1_mat[i - 1][j]);
-
-				__m256i third_diagonal_f1 = _mm256_add_epi32(second_diagonal_d, v_1_vec);
-				third_diagonal_f1 = _mm256_min_epi32(third_diagonal_f1, second_diagonal_f1);
-				third_diagonal_f1 = _mm256_add_epi32(third_diagonal_f1, u_1_vec);
-				__m256i third_diagonal_d = third_diagonal_f1;
-				//Second part of convex function
-				__m256i second_diagonal_f2 = _mm256_loadu_si256((__m256i *)&f2_mat[i - 1][j]);
-
-				__m256i third_diagonal_f2 = _mm256_add_epi32(second_diagonal_d, v_2_vec);
-				third_diagonal_f2 = _mm256_min_epi32(third_diagonal_f2, second_diagonal_f2);
-				third_diagonal_f2 = _mm256_add_epi32(third_diagonal_f2, u_2_vec);
-				third_diagonal_d = _mm256_min_epi32(third_diagonal_f2, third_diagonal_d);
-
-				//Match/mismatch
-				int m = last_ind - j + ((i > seq2.length()) ? (i - seq2.length()) : 0);
-				int n = j - 1;
-
-				__m128i seq1_chars = _mm_loadu_si128((__m128i *)&seq1_arr[m - 1 + 16]);
-				__m128i seq2_chars = _mm_loadu_si128((__m128i *)&seq2_arr[n - 1 + 16]);//load chars
-
-				__m256i seq1_chars_ext = _mm256_cvtepu8_epi32 (seq1_chars);
-				__m256i seq2_chars_ext = _mm256_cvtepu8_epi32 (seq2_chars);
-
-				seq1_chars_ext = _mm256_permutevar8x32_epi32(seq1_chars_ext, reverse_mask);
-
-				__m256i mask = _mm256_cmpeq_epi32(seq1_chars_ext, seq2_chars_ext);
-
-				__m256i diff_vec = _mm256_blendv_epi8 (mismatch_vec, match_vec, mask);
-
-
-				__m256i first_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 2][j - 1]);
-
-				__m256i third_diagonal_f0 = _mm256_add_epi32(first_diagonal_d, diff_vec);
-
-				third_diagonal_d = _mm256_min_epi32(third_diagonal_f0, third_diagonal_d);
-
-				//Insertion
-				second_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 1][j - 1]);
-
-				__m256i third_diagonal_ins = _mm256_add_epi32(second_diagonal_d, insert_penalty_vec);
-				third_diagonal_d = _mm256_min_epi32(third_diagonal_ins, third_diagonal_d);
-
-				//storing results in matrices
-				_mm256_storeu_si256((__m256i *)&d_mat[i][j], third_diagonal_d);
-				_mm256_storeu_si256((__m256i *)&f1_mat[i][j], third_diagonal_f1);
-				_mm256_storeu_si256((__m256i *)&f2_mat[i][j], third_diagonal_f2);
-				
+				if(i <= seq1.length()) {
+					process_vector(d_mat, f1_mat, f2_mat, u_1_vec, u_2_vec, v_1_vec, v_2_vec, match_vec, mismatch_vec, insert_penalty_vec,
+							i, j, j, j - 1, j - 1,
+							last_ind - j + ((i > seq2.length()) ? (i - seq2.length()) : 0), j - 1,
+							mem_safety_add.length(), seq1_arr, seq2_arr);
+				} else {
+					process_vector(d_mat, f1_mat, f2_mat, u_1_vec, u_2_vec, v_1_vec, v_2_vec, match_vec, mismatch_vec, insert_penalty_vec,
+							i, j, j + 1, j, (i == seq1.length() + 1) ? j : j + 1,
+							seq1.length() + 1 - j, seq2.length() - last_ind + j - ((i < seq2.length()) ? (seq2.length() - i) : 0),
+							mem_safety_add.length(), seq1_arr, seq2_arr);
+				}
 			}
 			
-			d_mat[i][0] = f1_mat[i][0] = f2_mat[i][0] = d_mat[i][last_ind + 1] = f1_mat[i][last_ind + 1] = f2_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-
-		}
-
-		//second half of diagonals
-		for(int i = seq1.length() + 1; i < matrix_row_num; ++i) {
-			int last_ind = get_last_index(i, seq1, seq2);
-
-			for(int j = 1; j <= last_ind; j += VECTOR_SIZE) {
-				__m256i second_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 1][j + 1]);
-				//First part of convex function
-				__m256i second_diagonal_f1 = _mm256_loadu_si256((__m256i *)&f1_mat[i - 1][j + 1]);
-
-				__m256i third_diagonal_f1 = _mm256_add_epi32(second_diagonal_d, v_1_vec);
-				third_diagonal_f1 = _mm256_min_epi32(third_diagonal_f1, second_diagonal_f1);
-				third_diagonal_f1 = _mm256_add_epi32(third_diagonal_f1, u_1_vec);
-				__m256i third_diagonal_d = third_diagonal_f1;
-				//Second part of convex function
-				__m256i second_diagonal_f2 = _mm256_loadu_si256((__m256i *)&f2_mat[i - 1][j + 1]);
-
-				__m256i third_diagonal_f2 = _mm256_add_epi32(second_diagonal_d, v_2_vec);
-				third_diagonal_f2 = _mm256_min_epi32(third_diagonal_f2, second_diagonal_f2);
-				third_diagonal_f2 = _mm256_add_epi32(third_diagonal_f2, u_2_vec);
-				third_diagonal_d = _mm256_min_epi32(third_diagonal_f2, third_diagonal_d);
-
-				//Match/mismatch
-				int m = seq1.length() + 1 - j;
-				int n = seq2.length() - last_ind + j - ((i < seq2.length()) ? (seq2.length() - i) : 0);
-
-				__m128i seq1_chars = _mm_loadu_si128((__m128i *)&seq1_arr[m - 1 + 16]);
-				__m128i seq2_chars = _mm_loadu_si128((__m128i *)&seq2_arr[n - 1 + 16]);//load chars
-
-				__m256i seq1_chars_ext = _mm256_cvtepu8_epi32 (seq1_chars);
-				__m256i seq2_chars_ext = _mm256_cvtepu8_epi32 (seq2_chars);
-
-				seq1_chars_ext = _mm256_permutevar8x32_epi32(seq1_chars_ext, reverse_mask);
-
-				__m256i mask = _mm256_cmpeq_epi32(seq1_chars_ext, seq2_chars_ext);
-
-				__m256i diff_vec = _mm256_blendv_epi8 (mismatch_vec, match_vec, mask);
-
-				__m256i first_diagonal_d = _mm256_loadu_si256((__m256i *)((i == seq1.length() + 1) ? &d_mat[i - 2][j] : &d_mat[i - 2][j + 1]));
-
-				__m256i third_diagonal_f0 = _mm256_add_epi32(first_diagonal_d, diff_vec);
-
-				third_diagonal_d = _mm256_min_epi32(third_diagonal_f0, third_diagonal_d);
-
-				//Insertion
-				second_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 1][j]);
-
-				__m256i third_diagonal_ins = _mm256_add_epi32(second_diagonal_d, insert_penalty_vec);
-				third_diagonal_d = _mm256_min_epi32(third_diagonal_ins, third_diagonal_d);
-
-				//storing results in matrices
-				_mm256_storeu_si256((__m256i *)&d_mat[i][j], third_diagonal_d);
-				_mm256_storeu_si256((__m256i *)&f1_mat[i][j], third_diagonal_f1);
-				_mm256_storeu_si256((__m256i *)&f2_mat[i][j], third_diagonal_f2);
-			}
-
 			d_mat[i][0] = f1_mat[i][0] = f2_mat[i][0] = d_mat[i][last_ind + 1] = f1_mat[i][last_ind + 1] = f2_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
 
 		}
