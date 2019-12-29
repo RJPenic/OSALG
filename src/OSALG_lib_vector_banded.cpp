@@ -130,10 +130,7 @@ namespace OSALG_vector {
 		d_mat[i][offset + len] = f1_mat[i][offset + len] = f2_mat[i][offset + len] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
 	}
 
-	void init_first_triangle(int **d_mat, int **f1_mat, int **f2_mat, __m256i const &u_1_vec, __m256i const &u_2_vec, __m256i const &v_1_vec, __m256i const &v_2_vec,
-				__m256i const &match_vec, __m256i const &mismatch_vec, __m256i const &insert_penalty_vec, int memory_safety_len,
-				char const *seq1_safe, char const *seq2_safe, std::string const &seq1, std::string const &seq2, int triangle_size) {
-		// diagonal 0
+	void init_first_triangle_manual(int **d_mat, int **f1_mat, int **f2_mat, std::string const &seq1, std::string const &seq2, int triangle_size) {
 		d_mat[0][0] = d_mat[0][2] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
 		d_mat[0][1] = 0;
 		
@@ -141,6 +138,50 @@ namespace OSALG_vector {
 		f2_mat[0][0] = f2_mat[0][1] = f2_mat[0][2] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
 
 		for(int i = 1; i < triangle_size; ++i) {
+			int last_ind = get_last_index(i, seq1, seq2);
+			
+			f1_mat[i][0] = f1_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
+			f2_mat[i][0] = f2_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
+			d_mat[i][0] = d_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
+
+			for(int j = 1; j <= last_ind; ++j) {
+				if(j == 1) {
+					//Deletion
+					f1_mat[i][j] = d_mat[i][j] = std::min(d_mat[i - 1][j] + v[0], f1_mat[i - 1][j]) + u[0];
+
+					f2_mat[i][j] = std::min(d_mat[i - 1][j] + v[1], f2_mat[i - 1][j]) + u[1];
+
+					d_mat[i][j] = std::min(d_mat[i][j], f2_mat[i][j]);
+					
+				} else if(j == last_ind) {
+					f1_mat[i][j] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
+					f2_mat[i][j] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
+
+					d_mat[i][j] = d_mat[i - 1][j - 1] + u[0];//INSERTION
+				} else {
+					//Deletion
+					f1_mat[i][j] = d_mat[i][j] = std::min(d_mat[i - 1][j] + v[0], f1_mat[i - 1][j]) + u[0];
+					f2_mat[i][j] = std::min(d_mat[i - 1][j] + v[1], f2_mat[i - 1][j]) + u[1];
+
+					d_mat[i][j] = std::min(d_mat[i][j], f2_mat[i][j]);
+
+					//Insertion
+					d_mat[i][j] = std::min(d_mat[i][j], d_mat[i - 1][j - 1] + u[0]);
+					
+					//Match/mismatch
+					d_mat[i][j] = std::min(d_mat[i][j], d_mat[i - 2][j - 1] + diff(seq1[last_ind - j - 1], seq2[j - 2]));
+				}
+			}
+		}
+	}
+
+	void init_first_triangle(int **d_mat, int **f1_mat, int **f2_mat, __m256i const &u_1_vec, __m256i const &u_2_vec, __m256i const &v_1_vec, __m256i const &v_2_vec,
+				__m256i const &match_vec, __m256i const &mismatch_vec, __m256i const &insert_penalty_vec, int memory_safety_len,
+				char const *seq1_safe, char const *seq2_safe, std::string const &seq1, std::string const &seq2, int triangle_size) {
+
+		init_first_triangle_manual(d_mat, f1_mat, f2_mat, seq1, seq2, 2);
+
+		for(int i = 2; i < triangle_size; ++i) {
 			int last_ind = get_last_index(i, seq1, seq2);
 			calculate_diagonal(d_mat, f1_mat, f2_mat, u_1_vec, u_2_vec, v_1_vec, v_2_vec, match_vec, mismatch_vec, insert_penalty_vec, i, memory_safety_len,
 						seq1_safe, seq2_safe, seq1, seq2, 1, last_ind);
@@ -332,41 +373,33 @@ namespace OSALG_vector {
 		__m256i match_vec = _mm256_set1_epi32(MATCH_SCORE);
 		__m256i mismatch_vec = _mm256_set1_epi32(MISMATCH_SCORE);
 
-		//printf("TEST1\n");
-
 		init_first_triangle(d_mat, f1_mat, f2_mat, u_1_vec, u_2_vec, v_1_vec, v_2_vec, match_vec, mismatch_vec, insert_penalty_vec, mem_safety_add.length(),
 				seq1_arr, seq2_arr, seq1, seq2, TRIANGLE_SIZE);
-
-		//printf("TEST2\n");
 
 		int offset = 1;
 		for(int i = TRIANGLE_SIZE; i < matrix_row_num - TRIANGLE_SIZE; ++i) {
 			calculate_diagonal(d_mat, f1_mat, f2_mat, u_1_vec, u_2_vec, v_1_vec, v_2_vec, match_vec, mismatch_vec, insert_penalty_vec, i, mem_safety_add.length(),
 					seq1_arr, seq2_arr, seq1, seq2, offset, BANDWIDTH);
 
-			int last_ind = get_last_index(i, seq1, seq2);
+			int last_ind = get_last_index(i + 1, seq1, seq2);
 
+			//Move band downwards or right
 			if(i < seq1.length()) {
-				if(d_mat[offset] > d_mat[offset + BANDWIDTH - 1] && offset + BANDWIDTH - 1 < last_ind) {
+				if(d_mat[i][offset] > d_mat[i][offset + BANDWIDTH - 1] && offset + BANDWIDTH <= last_ind) {
 					++offset;
 				}
 			} else {
-				if((d_mat[offset] < d_mat[offset + BANDWIDTH - 1] && offset >= 1) || offset + BANDWIDTH - 1 == last_ind) {
+				if((d_mat[i][offset] < d_mat[i][offset + BANDWIDTH - 1] && offset > 1) || offset + BANDWIDTH - 1 > last_ind) {
 					--offset;
 				}
 			}
+			//printf("offset = %d\n", offset);
 		}
-
-		//printf("TEST3\n");
 
 		init_last_triangle(d_mat, f1_mat, f2_mat, u_1_vec, u_2_vec, v_1_vec, v_2_vec, match_vec, mismatch_vec, insert_penalty_vec, mem_safety_add.length(),
 				seq1_arr, seq2_arr, seq1, seq2, matrix_row_num, TRIANGLE_SIZE);
 
-		//printf("TEST4\n");
-
 		construct_CIGAR(d_mat, f1_mat, f2_mat, matrix_row_num, cigar, extended_cigar, seq1, seq2);
-
-		//printf("TEST5\n");
 
 		//Deleting allocated memory
 		for(int i = 0; i < matrix_row_num; ++i) {
