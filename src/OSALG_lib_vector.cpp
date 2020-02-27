@@ -3,17 +3,15 @@
 #include <vector>
 #include <limits>
 #include <unordered_map>
+#include <cmath>
 #include <immintrin.h> //AVX
 #include <stdlib.h>
 
 #define N_BORDER 30
-#define L 2
-#define MATCH_SCORE -2
-#define MISMATCH_SCORE 4
-#define TRIANGLE_SIZE 8
-#define VECTOR_SIZE 8
-
-#define OVERFLOW_CONTROL_VALUE 200
+#define MATCH_SCORE 2//changed
+#define MISMATCH_SCORE -4//changed
+#define TRIANGLE_SIZE 2
+#define VECTOR_SIZE 32
 
 #define STOP -1
 #define MATCH 0
@@ -24,12 +22,10 @@
 
 namespace OSALG_vector {
 
-	std::vector<int> u{ 4, 2 };
-	std::vector<int> v{ 1, 13 };
+	std::vector<char> ge{ 4, 2 };
+	std::vector<char> go{ 1, 13 };
 
-	std::string mem_safety_add = "++++++++++++++++";
-
-	__m256i reverse_mask = _mm256_setr_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+	const std::string mem_safety_add = "++++++++++++++++++++++++++++++++";
 
 	std::unordered_map<int, char> CIGAR_map = {
 			{MATCH, 'M'},
@@ -37,72 +33,40 @@ namespace OSALG_vector {
 			{DELETE, 'D'}
 	};
 
-	int diff(char first, char second) {
-		return (first == second) ? MATCH_SCORE : MISMATCH_SCORE;
-	}
-
-	int get_last_index(int i, std::string const &seq1, std::string const &seq2) {
-		int min = std::min(seq1.length() + 1, seq2.length() + 1);
+	int get_last_index(int i, std::string const &reference, std::string const &query) {
+		int min = std::min(reference.length() + 1, query.length() + 1);
 
 		if(i < min) {
 			return i + 1;
-		} else if(i < min + labs(seq2.length() - seq1.length())){
+		} else if(i < min + labs(query.length() - reference.length())){
 			return min;
 		}
 
-		return seq1.length() + seq2.length() + 1 - i;
+		return reference.length() + query.length() + 1 - i;
 	}
 
-	void init_first_triangle(int **d_mat, int **f1_mat, int **f2_mat, std::string const &seq1, std::string const &seq2) {
-		d_mat[0][0] = d_mat[0][2] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-		d_mat[0][1] = 0;
-		
-		f1_mat[0][0] = f1_mat[0][1] = f1_mat[0][2] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-		f2_mat[0][0] = f2_mat[0][1] = f2_mat[0][2] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-
-		for(int i = 1; i < TRIANGLE_SIZE; ++i) {
-			int last_ind = get_last_index(i, seq1, seq2);
-			
-			f1_mat[i][0] = f1_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-			f2_mat[i][0] = f2_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-			d_mat[i][0] = d_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-
-			for(int j = 1; j <= last_ind; ++j) {
-				if(j == 1) {
-					//Deletion
-					f1_mat[i][j] = d_mat[i][j] = std::min(d_mat[i - 1][j] + v[0], f1_mat[i - 1][j]) + u[0];
-
-					f2_mat[i][j] = std::min(d_mat[i - 1][j] + v[1], f2_mat[i - 1][j]) + u[1];
-
-					d_mat[i][j] = std::min(d_mat[i][j], f2_mat[i][j]);
-					
-				} else if(j == last_ind) {
-					f1_mat[i][j] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-					f2_mat[i][j] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
-
-					d_mat[i][j] = d_mat[i - 1][j - 1] + u[0];//INSERTION
-				} else {
-					//Deletion
-					f1_mat[i][j] = d_mat[i][j] = std::min(d_mat[i - 1][j] + v[0], f1_mat[i - 1][j]) + u[0];
-					f2_mat[i][j] = std::min(d_mat[i - 1][j] + v[1], f2_mat[i - 1][j]) + u[1];
-
-					d_mat[i][j] = std::min(d_mat[i][j], f2_mat[i][j]);
-
-					//Insertion
-					d_mat[i][j] = std::min(d_mat[i][j], d_mat[i - 1][j - 1] + u[0]);
-					
-					//Match/mismatch
-					d_mat[i][j] = std::min(d_mat[i][j], d_mat[i - 2][j - 1] + diff(seq1[last_ind - j - 1], seq2[j - 2]));
-				}
-			}
+	char calculate_uv_init(int init_border, int i, char ge1, char go1, char ge2, char go2) {
+		if(i + 1 < init_border) {
+			return - ge1;
 		}
+
+		if(i + 1 == init_border) {
+			return (i + 1) * (ge1 - ge2) - (go2 - go1) - ge2;
+		}
+
+		return - ge2;
 	}
 
-	bool test_coord_eligibility(int m, int n, std::string const &seq1, std::string const &seq2) {
-		return m > 0 && m <= seq1.length() && n > 0 && n <= seq2.length();
+	void init_matrices(char **u, char **v, char **x, char **y, char **xe, char **xe, char ge1, char go1, char ge2, char go2, int init_border, std::string const &reference, std::string const &query) {
+		x[0][2] = y[0][0] = - ge1 - go1;
+		xe[0][2] = ye[0][0] = - ge1 - go1;
+
+		v[0][2] = u[0][0] = calculate_uv_init(init_border, i, ge1, go1, ge2, go2);
+
+		x[0][1]
 	}
 
-	void updatePosition(unsigned int& i, unsigned int& j, int parent, bool first_half_diags, std::string const &seq1) {
+	void updatePosition(unsigned int& i, unsigned int& j, int parent, bool first_half_diags, std::string const &reference) {
 		if(first_half_diags) {
 			switch (parent) {
 				case MATCH:
@@ -120,7 +84,7 @@ namespace OSALG_vector {
 		} else {
 			switch (parent) {
 				case MATCH:
-					if(i != seq1.length() + 1) {
+					if(i != reference.length() + 1) {
 						j += 1;
 					}
 
@@ -137,233 +101,158 @@ namespace OSALG_vector {
 		}
 	}
 
-	void construct_CIGAR(int **d_mat, int **f1_mat, int **f2_mat, int matrix_row_num, std::string &cigar, bool extended_cigar, std::string const &seq1, std::string const &seq2) {
-		unsigned int i = matrix_row_num - 1;
-		unsigned int j = 1;
-
-		bool firstIdentified = false;
-		int counter;
-		char lastChar, c;
-
-		bool del_mode1 = false;
-		bool del_mode2 = false;
-		bool first_half_diags = false;
-
-		int min_seq_len = std::min(seq1.length(), seq2.length());
-
-		while (true) {
-			if(i == 0 && j == 1) break;
-
-			if(i <= seq1.length()) first_half_diags = true;
-
-			short parent;
-			int last_ind = get_last_index(i, seq1, seq2);		
-
-			if(first_half_diags && j == 1) {
-				parent = DELETE;
-			} else if(i <= min_seq_len && j == get_last_index(i, seq1, seq2)) {
-				parent = INSERT;
-			} else {
-
-				if(del_mode1) {
-					parent = DELETE;
-
-					if(d_mat[i][j] == f2_mat[i][j]) {
-						del_mode2 = true;
-						del_mode1 = false;
-						continue;
-					}
-
-					if(! (f1_mat[i][j] == ((first_half_diags ? f1_mat[i - 1][j] : f1_mat[i - 1][j + 1]) + u[0]))) {
-						del_mode1 = false;
-					}
-				} else if(del_mode2){
-					parent = DELETE;
-
-					if(!(f2_mat[i][j] == ((first_half_diags ? f2_mat[i - 1][j] : f2_mat[i - 1][j + 1]) + u[1]))) {
-						del_mode2 = false;
-					}
-				} else {
-					if(d_mat[i][j] == f2_mat[i][j]) {
-						del_mode2 = true;
-						continue;
-					} else if(d_mat[i][j] == f1_mat[i][j]) {
-						del_mode1 = true;
-						continue;
-					} else if(d_mat[i][j] == (((first_half_diags) ? d_mat[i - 1][j - 1] : d_mat[i - 1][j]) + u[0])) {
-						parent = INSERT;
-					} else {
-						parent = MATCH;
-					}
-				}
-				/*
-				if(del_mode) {
-					parent = DELETE;
-				}
-				*/	
-			}
-
-			if(extended_cigar) {
-				c = CIGAR_map.at(parent);
-
-				if(c == 'M') {
-					bool match;
-
-					if(first_half_diags) {
-						match = (seq1[last_ind - j + ((i > seq2.length()) ? (i - seq2.length()) : 0) - 1] == seq2[j - 2]);
-					} else {
-						match = (seq1[seq1.length() - j] == seq2[seq2.length() - 1 - last_ind + j - ((i < seq2.length()) ? (seq2.length() - i) : 0)]);
-					}
-
-					if(match) {
-						c = '=';
-					} else {
-						c = 'X';
-					}
-				}
-			} else {
-				c = CIGAR_map.at(parent);
-			}
-
-			if (firstIdentified && c == lastChar) {
-				counter++;
-			} else {
-				if (firstIdentified) {
-					if(counter >= 30 && lastChar == 'D') lastChar = 'N';
-					cigar = std::to_string(counter) + lastChar + cigar;
-				}
-				else {
-					firstIdentified = true;
-				}
-
-				lastChar = c;
-				counter = 1;
-			}
-
-			updatePosition(i, j, parent, first_half_diags, seq1);
-		}
-
-		cigar = std::to_string(counter) + lastChar + cigar;
+	void construct_CIGAR(char **u, char **v, char **x, char **xe, char **y, char **ye, int matrix_row_num, std::string &cigar, bool extended_cigar, std::string const &reference, std::string const &query) {
+		// TO DO ==> traceback
 	}
 
-	void process_vector(int **d_mat, int **f1_mat, int **f2_mat, __m256i const &u_1_vec, __m256i const &u_2_vec, __m256i const &v_1_vec, __m256i const &v_2_vec,
-				__m256i const &match_vec, __m256i const &mismatch_vec, __m256i const insert_penalty_vec, int i, int j, int up_j, int left_j, int upper_left_j,
- 				int m, int n, int memory_safety_len,
-				char const *seq1_safe, char const *seq2_safe) {
+	void compute_vector(std::string const &reference_safe, std::string const &query_safe, int m, int n,
+					__m256i const &match_vec, __m256i const &mismatch_vec, __m256i const &go1_neg_vec, __m256i const &ge1_vec,
+					__m256i const &go2_neg_vec, __m256i const &ge2_vec,
+					char **u, char **v, char **x, char **xe, char **y, char **ye, int i, int j, int up_j, int left_j) {
+		//z[i, j]
+		__m256i reference_chars = _mm_loadu_si128((__m256i *)&reference_safe[reference_safe.length() - m + 1 - VECTOR_SIZE]);//already reversed
+		__m256i query_chars = _mm_loadu_si128((__m256i *)&query_safe[n - 1]);//load chars
+		
+		__m256i mask = _mm256_cmpeq_epi8(reference_chars, query_chars);
+		__m256i z_vec = _mm256_blendv_epi8 (mismatch_vec, match_vec, mask);
+		
+		__m256i u_prev_vec = _mm256_loadu_si256((__m256i *)&u[i - 1][left_j]); // u[i, j - 1]
+		__m256i v_prev_vec = _mm256_loadu_si256((__m256i *)&v[i - 1][up_j]); // v[i - 1, j]
+		__m256i x_prev_vec = _mm256_loadu_si256((__m256i *)&x[i - 1][up_j]); // x[i - 1, j]
+		__m256i xe_prev_vec = _mm256_loadu_si256((__m256i *)&xe[i - 1][up_j]); // xe[i - 1, j]
+		__m256i y_prev_vec = _mm256_loadu_si256((__m256i *)&y[i - 1][left_j]); // y[i, j - 1]
+		__m256i ye_prev_vec = _mm256_loadu_si256((__m256i *)&ye[i - 1][left_j]); // ye[i, j - 1]
 
-		__m256i second_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 1][up_j]);
-		//First part of convex function
-		__m256i second_diagonal_f1 = _mm256_loadu_si256((__m256i *)&f1_mat[i - 1][up_j]);
+		__m256i temp =  _mm256_add_epi8(x_prev_vec, v_prev_vec);
+		z_vec = _mm256_max_epi8 (z_vec, temp);
 
-		__m256i third_diagonal_f1 = _mm256_add_epi32(second_diagonal_d, v_1_vec);
-		third_diagonal_f1 = _mm256_min_epi32(third_diagonal_f1, second_diagonal_f1);
-		third_diagonal_f1 = _mm256_add_epi32(third_diagonal_f1, u_1_vec);
-		__m256i third_diagonal_d = third_diagonal_f1;
-		//Second part of convex function
-		__m256i second_diagonal_f2 = _mm256_loadu_si256((__m256i *)&f2_mat[i - 1][up_j]);
+		__m256i temp =  _mm256_add_epi8(xe_prev_vec, v_prev_vec);
+		z_vec = _mm256_max_epi8 (z_vec, temp);
 
-		__m256i third_diagonal_f2 = _mm256_add_epi32(second_diagonal_d, v_2_vec);
-		third_diagonal_f2 = _mm256_min_epi32(third_diagonal_f2, second_diagonal_f2);
-		third_diagonal_f2 = _mm256_add_epi32(third_diagonal_f2, u_2_vec);
-		third_diagonal_d = _mm256_min_epi32(third_diagonal_f2, third_diagonal_d);
+		__m256i temp =  _mm256_add_epi8(y_prev_vec, u_prev_vec);
+		z_vec = _mm256_max_epi8 (z_vec, temp);
 
-		__m128i seq1_chars = _mm_loadu_si128((__m128i *)&seq1_safe[m - 1 + memory_safety_len]);
-		__m128i seq2_chars = _mm_loadu_si128((__m128i *)&seq2_safe[n - 1]);//load chars
+		__m256i temp =  _mm256_add_epi8(ye_prev_vec, u_prev_vec);
+		z_vec = _mm256_max_epi8 (z_vec, temp);
 
-		__m256i seq1_chars_ext = _mm256_cvtepu8_epi32 (seq1_chars);
-		__m256i seq2_chars_ext = _mm256_cvtepu8_epi32 (seq2_chars);
+		//u[i, j] and v[i, j]
+		__m256i u_vec = _mm256_sub_epi8(z_vec, v_prev_vec);
+		__m256i v_vec = _mm256_sub_epi8(z_vec, u_prev_vec);
 
-		seq1_chars_ext = _mm256_permutevar8x32_epi32(seq1_chars_ext, reverse_mask);
+		_mm256_storeu_si256((__m256i *)&u[i][j], u_vec);
+		_mm256_storeu_si256((__m256i *)&v[i][j], v_vec);
+		
+		//x[i, j]
+		__m256i x_vec = _mm256_sub_epi8(x_prev_vec, u_vec);
+		x_vec = _mm256_max_epi8(x_vec, go1_neg_vec);
+		x_vec = _mm256_sub_epi8(x_vec, ge1_vec);
 
-		__m256i mask = _mm256_cmpeq_epi32(seq1_chars_ext, seq2_chars_ext);
+		_mm256_storeu_si256((__m256i *)&x[i][j], x_vec);
 
-		__m256i diff_vec = _mm256_blendv_epi8 (mismatch_vec, match_vec, mask);
+		//xe[i, j]
+		__m256i xe_vec = _mm256_sub_epi8(xe_prev_vec, u_vec);
+		xe_vec = _mm256_max_epi8(xe_vec, go2_neg_vec);
+		xe_vec = _mm256_sub_epi8(xe_vec, ge2_vec);
 
+		_mm256_storeu_si256((__m256i *)&xe[i][j], xe_vec);
 
-		__m256i first_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 2][upper_left_j]);
+		//y[i, j]
+		__m256i y_vec = _mm256_sub_epi8(y_prev_vec, v_vec);
+		y_vec = _mm256_max_epi8(y_vec, go1_neg_vec);
+		y_vec = _mm256_sub_epi8(y_vec, ge1_vec);
 
-		__m256i third_diagonal_f0 = _mm256_add_epi32(first_diagonal_d, diff_vec);
+		_mm256_storeu_si256((__m256i *)&y[i][j], y_vec);
 
-		third_diagonal_d = _mm256_min_epi32(third_diagonal_f0, third_diagonal_d);
+		//ye[i, j]
+		__m256i ye_vec = _mm256_sub_epi8(ye_prev_vec, v_vec);
+		ye_vec = _mm256_max_epi8(ye_vec, go2_neg_vec);
+		ye_vec = _mm256_sub_epi8(ye_vec, ge2_vec);
 
-		//Insertion
-		second_diagonal_d = _mm256_loadu_si256((__m256i *)&d_mat[i - 1][left_j]);
-
-		__m256i third_diagonal_ins = _mm256_add_epi32(second_diagonal_d, insert_penalty_vec);
-		third_diagonal_d = _mm256_min_epi32(third_diagonal_ins, third_diagonal_d);
-
-		//storing results in matrices
-		_mm256_storeu_si256((__m256i *)&d_mat[i][j], third_diagonal_d);
-		_mm256_storeu_si256((__m256i *)&f1_mat[i][j], third_diagonal_f1);
-		_mm256_storeu_si256((__m256i *)&f2_mat[i][j], third_diagonal_f2);
+		_mm256_storeu_si256((__m256i *)&ye[i][j], ye_vec);
 	}
 
-	int long_gaps_alignment(std::string const &seq1, std::string const &seq2, std::string &cigar, bool extended_cigar) {
-		std::string seq1_safe = mem_safety_add + seq1;
-		std::string seq2_safe = seq2 + mem_safety_add;
+	void long_gaps_alignment(std::string const &reference, std::string const &query, std::string &cigar, bool extended_cigar) {
+		std::string reference_safe = mem_safety_add + reference;
+		std::reverse(reference_safe.begin(), reference_safe.end());//use SIMD for string reversal???
+		std::string query_safe = query + mem_safety_add;
 
-		const char *seq1_arr = seq1_safe.c_str();
-		const char *seq2_arr = seq2_safe.c_str();
+		int matrix_row_num = reference.length() + query.length() + 1;
 
-		int matrix_row_num = seq1.length() + seq2.length() + 1;
+		char **u = new char*[matrix_row_num];
+		char **v = new char*[matrix_row_num];
+		char **x = new char*[matrix_row_num];
+		char **y = new char*[matrix_row_num];
+		char **xe = new char*[matrix_row_num];
+		char **ye = new char*[matrix_row_num];
 
-		int **d_mat = new int*[matrix_row_num];
-		int **f1_mat = new int*[matrix_row_num];
-		int **f2_mat = new int*[matrix_row_num];
+		int diagonal_size = ((std::min(reference.length(), query.length())) / VECTOR_SIZE) * VECTOR_SIZE + VECTOR_SIZE + 2;
 
-		int diagonal_size = ((std::min(seq1.length() + 1, seq2.length() + 1) - 1) / VECTOR_SIZE) * VECTOR_SIZE + VECTOR_SIZE + 2;
-
-		//TO DO ALLOCATION
+		//TO DO: SMARTER ALLOCATION
 		for(int i = 0; i < matrix_row_num; ++i) {
-			d_mat[i] = new int[diagonal_size];
-			f1_mat[i] = new int[diagonal_size];
-			f2_mat[i] = new int[diagonal_size];
+			u[i] = new char[diagonal_size];
+			v[i] = new char[diagonal_size];
+			x[i] = new char[diagonal_size];
+			y[i] = new char[diagonal_size];
+			xe[i] = new char[diagonal_size];
+			ye[i] = new char[diagonal_size];
 		}
 
-		init_first_triangle(d_mat, f1_mat, f2_mat, seq1, seq2);
-		__m256i insert_penalty_vec = _mm256_set1_epi32(u[0]);
+		int init_border = ceil((double)(go[1] - go[0]) / (ge[0] - ge[1]) - 1.0);
 
-		__m256i u_1_vec = _mm256_set1_epi32(u[0]);
-		__m256i u_2_vec = _mm256_set1_epi32(u[1]);
-		__m256i v_1_vec = _mm256_set1_epi32(v[0]);
-		__m256i v_2_vec = _mm256_set1_epi32(v[1]);
+		init_matrices(u, v, x, y, xe, ye, ge[0], go[0], ge[1], go[1], init_border, reference, query);
 
-		__m256i match_vec = _mm256_set1_epi32(MATCH_SCORE);
-		__m256i mismatch_vec = _mm256_set1_epi32(MISMATCH_SCORE);
+		//ge ==> gap extend
+		//go ==> gap open
+		__m256i ge1_vec = _mm256_set1_epi8(ge[0]);
+		__m256i ge2_vec = _mm256_set1_epi8(ge[1]);
+		__m256i go1_neg_vec = _mm256_set1_epi8(-go[0]);
+		__m256i go2_neg_vec = _mm256_set1_epi8(-go[1]);
+		
+		__m256i match_vec = _mm256_set1_epi8(MATCH_SCORE);
+		__m256i mismatch_vec = _mm256_set1_epi8(MISMATCH_SCORE);
 
 		for(int i = TRIANGLE_SIZE; i < matrix_row_num; ++i) {
-			int last_ind = get_last_index(i, seq1, seq2);
+			int last_ind = get_last_index(i, reference, query);
 
 			for(int j = 1; j <= last_ind; j += VECTOR_SIZE) {
-				if(i <= seq1.length()) {
-					process_vector(d_mat, f1_mat, f2_mat, u_1_vec, u_2_vec, v_1_vec, v_2_vec, match_vec, mismatch_vec, insert_penalty_vec,
-							i, j, j, j - 1, j - 1,
-							last_ind - j + ((i > seq2.length()) ? (i - seq2.length()) : 0), j - 1,
-							mem_safety_add.length(), seq1_arr, seq2_arr);
+				if(i <= reference.length()) {
+					compute_vector(reference_safe, query_safe, last_ind - j + ((i > query.length()) ? (i - query.length()) : 0), j - 1,
+								match_vec, mismatch_vec,
+								go1_neg_vec, ge1_vec, go2_neg_vec, ge2_vec,
+								u, v, x, xe, y, ye, i, j, j, j - 1);
 				} else {
-					process_vector(d_mat, f1_mat, f2_mat, u_1_vec, u_2_vec, v_1_vec, v_2_vec, match_vec, mismatch_vec, insert_penalty_vec,
-							i, j, j + 1, j, (i == seq1.length() + 1) ? j : j + 1,
-							seq1.length() + 1 - j, seq2.length() - last_ind + j - ((i < seq2.length()) ? (seq2.length() - i) : 0),
-							mem_safety_add.length(), seq1_arr, seq2_arr);
+					compute_vector(reference_safe, query_safe, reference.length() + 1 - j, query.length() - last_ind + j - ((i < query.length()) ? (query.length() - i) : 0),
+								match_vec, mismatch_vec,
+								go1_neg_vec, ge1_vec, go2_neg_vec, ge2_vec,
+								u, v, x, xe, y, ye, i, j, j + 1, j);
 				}
 			}
 			
-			d_mat[i][0] = f1_mat[i][0] = f2_mat[i][0] = d_mat[i][last_ind + 1] = f1_mat[i][last_ind + 1] = f2_mat[i][last_ind + 1] = std::numeric_limits<int>::max() - OVERFLOW_CONTROL_VALUE;
+			//for first row and column
+			x[i][last_ind] = y[i][0] = - ge[0] - go[0];
+			xe[i][last_ind] = ye[i][0] = - ge[1] - go[1];
+
+			v[i][last_ind] = u[i][0] = calculate_uv_init(init_border, i, ge[0], go[0], ge[1], go[1]);
 
 		}
 
-		construct_CIGAR(d_mat, f1_mat, f2_mat, matrix_row_num, cigar, extended_cigar, seq1, seq2);
+		construct_CIGAR(u, v, x, xe, y, ye, matrix_row_num, cigar, extended_cigar, reference, query);
 
-		//Deleting allocated memory
+		//Delete allocated memory
 		for(int i = 0; i < matrix_row_num; ++i) {
-			delete[] d_mat[i];
-			delete[] f1_mat[i];
-			delete[] f2_mat[i];
+			delete[] u[i];
+			delete[] v[i];
+			delete[] x[i];
+			delete[] y[i];
+			delete[] xe[i];
+			delete[] ye[i];
 		}
-		delete[] d_mat;
-		delete[] f1_mat;
-		delete[] f2_mat;
 
-		return 1;
+		delete[] u;
+		delete[] v;
+		delete[] x;
+		delete[] y;
+		delete[] xe;
+		delete[] ye;
 	}
 }
