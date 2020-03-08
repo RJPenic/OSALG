@@ -93,19 +93,41 @@ namespace OSALG_vector {
 			if(m == 0 && n == 0) break;
 
 			if(m == 0) {
-
+				parent = DELETE;
 			} else if(n == 0) {
-	
+				parent = INSERT;
 			} else {
 				if(del_mode1) {
-					//TO DO
+					if(x[m - 1 + n][n] != 0) {
+						del_mode1 = false;
+					}
+					
+					parent = DELETE;
 				} else if(del_mode2) {
-					//TO DO
-				} else {
+					if(xe[m + n][n] == x[m + n][n]) {
+						del_mode2 = false;
+						del_mode1 = true;
+					}
 
+					parent = DELETE;
+				} else {
+					if(xe == 0) {
+						parent = DELETE;
+						del_mode2 = true;
+					} else if(x == 0) {
+						parent = DELETE;
+						del_mode1 = true;
+					} else if(ye == 0) {
+						parent = INSERT;
+					} else if(y == 0) {
+						parent = INSERT;
+					} else {
+						parent = MATCH;
+					}
 				}
 			}
 
+			//update CIGAR
 			c = CIGAR_map.at(parent);
 
 			if (firstIdentified && c == lastChar) {
