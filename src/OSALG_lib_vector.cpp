@@ -44,12 +44,12 @@ namespace OSALG_vector {
 	}
 
 	char calculate_uv_init(int init_border, int i, char ge1, char go1, char ge2, char go2) {
-		if(i + 1 < init_border) {
+		if(i - 1 < init_border) {
 			return - ge1;
 		}
 
-		if(i + 1 == init_border) {
-			return (i + 1) * (ge1 - ge2) - (go2 - go1) - ge2;
+		if(i - 1 == init_border) {
+			return (i - 1) * (ge1 - ge2) - (go2 - go1) - ge2;
 		}
 
 		return - ge2;
@@ -57,7 +57,7 @@ namespace OSALG_vector {
 
 	void init_matrices(char **u, char **v, char **x, char **y, char **xe, char **xe, char ge1, char go1, char ge2, char go2, int init_border, std::string const &reference, std::string const &query) {
 		x[1][1] = y[1][0] = - ge1 - go1;
-		xe[1][1] = ye[1][0] = - ge1 - go1;
+		xe[1][1] = ye[1][0] = - ge2 - go2;
 
 		v[1][1] = u[1][0] = std::max(- ge1 - go1, -ge2 - go2);
 	}
@@ -151,15 +151,15 @@ namespace OSALG_vector {
 		cigar = std::to_string(counter) + lastChar + cigar;
 	}
 
-	void compute_vector(std::string const &reference_safe, std::string const &query_safe,
+	void compute_vector(char const *reference_safe, char const *query_safe,
 					__m256i const &match_vec, __m256i const &mismatch_vec, __m256i const &go1_neg_vec, __m256i const &ge1_vec,
 					__m256i const &go2_neg_vec, __m256i const &ge2_vec,
-					char **u, char **v, char **x, char **xe, char **y, char **ye, int i, int j) {
+					char **u, char **v, char **x, char **xe, char **y, char **ye, int i, int j, int mem_safety_len) {
 		int m = i - j;
 		int n = j;
 
 		//z[i, j]
-		__m256i reference_chars = _mm_loadu_si128((__m256i *)&reference_safe[reference_safe.length() - m + 1 - VECTOR_SIZE]);//already reversed
+		__m256i reference_chars = _mm_loadu_si128((__m256i *)&reference_safe[reference_safe.length() - m + 1 - VECTOR_SIZE - mem_safety_len]);//already reversed
 		__m256i query_chars = _mm_loadu_si128((__m256i *)&query_safe[n - 1]);//load chars
 		
 		__m256i mask = _mm256_cmpeq_epi8(reference_chars, query_chars);
@@ -238,7 +238,7 @@ namespace OSALG_vector {
 		char **xe = new char*[matrix_row_num];
 		char **ye = new char*[matrix_row_num];
 
-		int diagonal_size = std::min(reference.length(), query.length()) + VECTOR_SIZE;
+		int diagonal_size = query.length() + VECTOR_SIZE;
 
 		//TO DO: SMARTER ALLOCATION ==> ???
 		for(int i = 0; i < matrix_row_num; ++i) {
@@ -269,10 +269,10 @@ namespace OSALG_vector {
 			int diagonal_len = get_diagonal_len(i, reference, query);
 			int start_j = get_diagonal_start_column(i, reference, query);
 
-			for(int j = start_j; j <= diagonal_len + start_j; j += VECTOR_SIZE) {
-				compute_vector(reference_safe, query_safe, match_vec, mismatch_vec,
+			for(int j = start_j; j < diagonal_len + start_j; j += VECTOR_SIZE) {
+				compute_vector(reference_safe.c_str(), query_safe.c_str(), match_vec, mismatch_vec,
 							go1_neg_vec, ge1_vec, go2_neg_vec, ge2_vec,
-							u, v, x, xe, y, ye, i, j);
+							u, v, x, xe, y, ye, i, j, mem_safety_add.length());
 			}
 			
 			//first row and column initialization
