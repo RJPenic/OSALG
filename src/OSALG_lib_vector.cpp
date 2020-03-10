@@ -8,8 +8,8 @@
 #include <stdlib.h>
 
 #define N_BORDER 30
-#define MATCH_SCORE 2//changed
-#define MISMATCH_SCORE -4//changed
+#define MATCH_SCORE 2
+#define MISMATCH_SCORE -4
 #define VECTORIZATION_START_DIAGONAL 2
 #define VECTOR_SIZE 32
 
@@ -20,8 +20,8 @@
 
 namespace OSALG_vector {
 
-	std::vector<char> ge{ 4, 2 };
-	std::vector<char> go{ 2, 13 };
+	std::vector<char> ge{ 2, 2 };
+	std::vector<char> go{ 4, 13 };
 
 	const std::string mem_safety_add = "++++++++++++++++++++++++++++++++";
 
@@ -98,22 +98,20 @@ namespace OSALG_vector {
 
 					parent = INSERT;
 				} else {
-					if(x[m + n - 1][n] == u[m + n][n]) {
+					if(u[m + n][n] + v[m + n - 1][n] == 2 * go[0] + 2 * ge[0] + ((reference[m - 1] == query[n - 1]) ? MATCH_SCORE : MISMATCH_SCORE)) {
+						parent = MATCH;
+					} else if(x[m + n - 1][n] == u[m + n][n]) {
 						parent = DELETE;
 
 						if(x[m + n - 1][n] == go[0]) {
 							del_mode = true;
 						}
-						
-					} else if(y[m + n - 1][n - 1] == v[m + n][n]) {
+					} else {
 						parent = INSERT;
 						
 						if(y[m + n - 1][n - 1] == go[0]) {
 							ins_mode = true;
 						}
-						
-					} else {
-						parent = MATCH;
 					}
 				}
 			}
@@ -157,7 +155,6 @@ namespace OSALG_vector {
 		int n = j;
 
 		//z[i, j]
-		//printf("%d\n", reference_safe.length() - m + 1 - VECTOR_SIZE - mem_safety_len);
 		__m256i reference_chars = _mm256_loadu_si256((__m256i *)&reference_safe.c_str()[reference_safe.length() - m]);//already reversed
 		__m256i query_chars = _mm256_loadu_si256((__m256i *)&query_safe.c_str()[n - 1]);//load chars
 		
