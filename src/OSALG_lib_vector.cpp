@@ -121,6 +121,14 @@ namespace OSALG_vector {
 			//update CIGAR
 			c = CIGAR_map.at(parent);
 
+			if(extended_cigar && parent == MATCH) {
+				if(reference[m - 1] == query[n - 1]) {
+					c = '=';
+				} else {
+					c = 'X';
+				}
+			}
+
 			if (firstIdentified && c == lastChar) {
 				counter++;
 			} else {
@@ -150,7 +158,7 @@ namespace OSALG_vector {
 
 		//z[i, j]
 		//printf("%d\n", reference_safe.length() - m + 1 - VECTOR_SIZE - mem_safety_len);
-		__m256i reference_chars = _mm256_loadu_si256((__m256i *)&reference_safe.c_str()[reference_safe.length() - m + 1]);//already reversed
+		__m256i reference_chars = _mm256_loadu_si256((__m256i *)&reference_safe.c_str()[reference_safe.length() - m]);//already reversed
 		__m256i query_chars = _mm256_loadu_si256((__m256i *)&query_safe.c_str()[n - 1]);//load chars
 		
 		__m256i mask = _mm256_cmpeq_epi8(reference_chars, query_chars);
