@@ -108,7 +108,7 @@ namespace OSALG_vector {
 					} else if(y[m + n - 1][n - 1] == v[m + n][n]) {
 						parent = INSERT;
 						
-						if(y[m + n - 1][n - 1] != go[0]) {
+						if(y[m + n - 1][n - 1] == go[0]) {
 							ins_mode = true;
 						}
 						
