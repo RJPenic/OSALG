@@ -6,6 +6,7 @@
 #include <cmath>
 #include <immintrin.h> //AVX
 #include <stdlib.h>
+#include <cstdint>
 
 #define N_BORDER 30
 #define MATCH_SCORE 2
@@ -20,10 +21,10 @@
 
 namespace OSALG_vector {
 
-	std::vector<char> ge{ 2, 2 };
-	std::vector<char> go{ 4, 13 };
+	std::vector<int8_t> ge{ 2, 2 };
+	std::vector<int8_t> go{ 4, 13 };
 
-	const std::string mem_safety_add = "++++++++++++++++++++++++++++++++";
+	const __m256i zero_vec = _mm256_setzero_si256();
 
 	std::unordered_map<int, char> CIGAR_map = {
 			{MATCH, 'M'},
@@ -43,7 +44,7 @@ namespace OSALG_vector {
 		return reference.length() + query.length() + 1 - i;
 	}
 
-	void init_matrices(char **u, char **v, char **x, char **y, char ge1, char go1, std::string const &reference, std::string const &query) {
+	void init_matrices(int8_t **u, int8_t **v, int8_t **x, int8_t **y, int8_t ge1, int8_t go1, std::string const &reference, std::string const &query) {
 		x[1][1] = y[1][0] = 0;
 
 		v[1][1] = u[1][0] = 0;
@@ -64,7 +65,7 @@ namespace OSALG_vector {
 			}
 	}
 
-	void construct_CIGAR(char **u, char **v, char **x, char **y, int matrix_row_num, std::string &cigar, bool extended_cigar, std::string const &reference, std::string const &query) {
+	void construct_CIGAR(int8_t **u, int8_t **v, int8_t **x, int8_t **y, int matrix_row_num, std::string &cigar, bool extended_cigar, std::string const &reference, std::string const &query) {
 		unsigned int m = reference.length();
 		unsigned int n = query.length();
 
@@ -148,22 +149,19 @@ namespace OSALG_vector {
 		cigar = std::to_string(counter) + lastChar + cigar;
 	}
 
-	void compute_vector(std::string const &reference_safe, std::string const &query_safe,
-					__m256i const &match_vec, __m256i const &mismatch_vec, __m256i const &go1_vec, __m256i const &ge1_vec,
-					char **u, char **v, char **x, char **y, int i, int j, int mem_safety_len) {
+	void compute_vector(char const *reference_safe, char const *query_safe, int ref_len,
+					__m256i const &match_vec, __m256i const &mismatch_vec, __m256i const &go1_vec, __m256i const &ge1_vec, __m256i const &param_sum_vec,
+					int8_t **u, int8_t **v, int8_t **x, int8_t **y, int i, int j) {
 		int m = i - j;
 		int n = j;
 
 		//z[i, j]
-		__m256i reference_chars = _mm256_loadu_si256((__m256i *)&reference_safe.c_str()[reference_safe.length() - m]);//already reversed
-		__m256i query_chars = _mm256_loadu_si256((__m256i *)&query_safe.c_str()[n - 1]);//load chars
+		__m256i reference_chars = _mm256_loadu_si256((__m256i *)&reference_safe[ref_len - m]);//already reversed
+		__m256i query_chars = _mm256_loadu_si256((__m256i *)&query_safe[n - 1]);//load chars
 		
 		__m256i mask = _mm256_cmpeq_epi8(reference_chars, query_chars);
 		__m256i z_vec = _mm256_blendv_epi8 (mismatch_vec, match_vec, mask);
-		z_vec = _mm256_add_epi8(z_vec, go1_vec);
-		z_vec = _mm256_add_epi8(z_vec, go1_vec);
-		z_vec = _mm256_add_epi8(z_vec, ge1_vec);
-		z_vec = _mm256_add_epi8(z_vec, ge1_vec);	
+		z_vec = _mm256_add_epi8(z_vec, param_sum_vec);	
 
 		__m256i u_prev_vec = _mm256_loadu_si256((__m256i *)&u[i - 1][j - 1]); // u[i, j - 1]
 		__m256i v_prev_vec = _mm256_loadu_si256((__m256i *)&v[i - 1][j]); // v[i - 1, j]
@@ -184,18 +182,16 @@ namespace OSALG_vector {
 		_mm256_storeu_si256((__m256i *)&v[i][j], v_vec);
 		
 		//x[i, j]
-		__m256i x_vec = _mm256_setzero_si256();
 		temp = _mm256_sub_epi8(x_prev_vec, u_vec);
 		temp = _mm256_add_epi8(temp, go1_vec);
-		x_vec = _mm256_max_epi8(x_vec, temp);
+		__m256i x_vec = _mm256_max_epi8(zero_vec, temp);
 
 		_mm256_storeu_si256((__m256i *)&x[i][j], x_vec);
 
 		//y[i, j]
-		__m256i y_vec = _mm256_setzero_si256();
 		temp = _mm256_sub_epi8(y_prev_vec, v_vec);
 		temp = _mm256_add_epi8(temp, go1_vec);
-		y_vec = _mm256_max_epi8(y_vec, temp);
+		__m256i y_vec = _mm256_max_epi8(zero_vec, temp);
 
 		_mm256_storeu_si256((__m256i *)&y[i][j], y_vec);
 
@@ -208,25 +204,26 @@ namespace OSALG_vector {
 	}
 
 	void long_gaps_alignment(std::string const &reference, std::string const &query, std::string &cigar, bool extended_cigar) {
-		std::string reference_safe = reference;
-		std::reverse(reference_safe.begin(), reference_safe.end());//use SIMD for string reversal???
-		std::string query_safe = query;
+		std::string reference_rev = reference;
+		std::reverse(reference_rev.begin(), reference_rev.end());//use SIMD for string reversal???
+		const char *reference_safe = reference_rev.c_str();
+		const char *query_safe = query.c_str();
 
 		int matrix_row_num = reference.length() + query.length() + 1;
 
-		char **u = new char*[matrix_row_num];
-		char **v = new char*[matrix_row_num];
-		char **x = new char*[matrix_row_num];
-		char **y = new char*[matrix_row_num];
+		int8_t **u = new int8_t*[matrix_row_num];
+		int8_t **v = new int8_t*[matrix_row_num];
+		int8_t **x = new int8_t*[matrix_row_num];
+		int8_t **y = new int8_t*[matrix_row_num];
 
 		int diagonal_size = query.length() + VECTOR_SIZE;
 
 		//TO DO: SMARTER ALLOCATION ==> ???
 		for(int i = 0; i < matrix_row_num; ++i) {
-			u[i] = new char[diagonal_size];
-			v[i] = new char[diagonal_size];
-			x[i] = new char[diagonal_size];
-			y[i] = new char[diagonal_size];
+			u[i] = new int8_t[diagonal_size];
+			v[i] = new int8_t[diagonal_size];
+			x[i] = new int8_t[diagonal_size];
+			y[i] = new int8_t[diagonal_size];
 		}
 
 		init_matrices(u, v, x, y, ge[0], go[0], reference, query);
@@ -235,10 +232,10 @@ namespace OSALG_vector {
 		//go ==> gap open
 		__m256i ge1_vec = _mm256_set1_epi8(ge[0]);
 		__m256i go1_vec = _mm256_set1_epi8(go[0]);
+		__m256i param_sum_vec = _mm256_set1_epi8(2 * (go[0] + ge[0]));
 		
 		__m256i match_vec = _mm256_set1_epi8(MATCH_SCORE);
 		__m256i mismatch_vec = _mm256_set1_epi8(MISMATCH_SCORE);
-
 
 		//iterate through diagonals
 		for(int i = VECTORIZATION_START_DIAGONAL; i < matrix_row_num; ++i) {
@@ -246,9 +243,9 @@ namespace OSALG_vector {
 			int start_j = get_diagonal_start_column(i, reference, query);
 
 			for(int j = start_j; j < diagonal_len + start_j; j += VECTOR_SIZE) {
-				compute_vector(reference_safe, query_safe, match_vec, mismatch_vec,
-							go1_vec, ge1_vec,
-							u, v, x, y, i, j, mem_safety_add.length());
+				compute_vector(reference_safe, query_safe, reference.length(), match_vec, mismatch_vec,
+							go1_vec, ge1_vec, param_sum_vec,
+							u, v, x, y, i, j);
 			}
 			
 			//first row and column initialization
@@ -264,7 +261,6 @@ namespace OSALG_vector {
 				v[i][i] = go[0];
 			}
 		}
-
 
 		construct_CIGAR(u, v, x, y, matrix_row_num, cigar, extended_cigar, reference, query);
 
