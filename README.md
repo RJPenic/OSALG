@@ -1,6 +1,6 @@
-# Final BSc thesis (computer science - 2018/2019)
+# Optimal Sequence Aligner allowing for Long Gaps (OSALG)
 
-Final BSc thesis is a course held at University of Zagreb, Faculty of Electrical Engineering and Computing in the sixth semester of the undergraduate study. The main focus is to apply knowledge and skills obtained from Software Design Project course to recreate or improve existing methods which are widely used in bioinformatics. Under the supervision of prof. Mile Šikić, students will implement one such algorithm, thoroughly test it on simulated and real data, and formally encapsulate the whole process by writing and defending a thesis. Each student will have access to a private branch of this repository, on which this README will be updated with the specific task.
+One of the main problems of bioinformatics is sequence alignment. Sometimes, as when aligning RNA sequences, it is necessary to find long deletion gaps which is something most classic alignment algorithms cannot do. To make sure such gaps get found, we use concave penalty function. Calculating value of concave function in specific point is complex and slow process so we approximate it with a certain number of affine functions. Most popular algorithm allowing for long gaps is Gotoh's algorithm. Vectorization is technology supported by most modern processors and it allows us to do simple operations such as addition on bigger data at the same time. Because of that, vectorization can efficiently speed up sequence alignment process. We developed tool called OSALG, an implementation of Gotoh's algorithm (and its variations).
 
 ## Installation
 
@@ -22,6 +22,7 @@ After installation, executable file will be located in /build/bin folder. To use
 cd bin
 ./OptSeqAlignmentLongGaps reads.fasta references.fasta
 ```
+It is highly recommended to use '--vector' option for improved results and faster execution.
 
 ## Disclaimer
 
